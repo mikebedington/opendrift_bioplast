@@ -101,11 +101,11 @@ class BioPlastDrift(OceanDrift):
                                 'description': 'Density (rho) of material collected on plastic',
                                 'level': self.CONFIG_LEVEL_ADVANCED},
             'biofilm:grazing_rate':{'type':'float', 'default':0.39,
-                                'min': None, 'max': None, 'units': 'seconds',
+                                'min': None, 'max': None, 'units': 'day^-1',
                                 'description': 'Grazing rate on biofilm',
                                 'level': self.CONFIG_LEVEL_ADVANCED},
             'biofilm:respiration_rate':{'type':'float', 'default':0.1,
-                                'min': None, 'max': None, 'units': 'seconds',
+                                'min': None, 'max': None, 'units': 'day^-1',
                                 'description': 'Respiration rate of algae on biofilm',
                                 'level': self.CONFIG_LEVEL_ADVANCED},
             'biofilm:temperature_coeff_respiration':{'type':'float', 'default':2,
@@ -207,8 +207,9 @@ class BioPlastDrift(OceanDrift):
         respiration = self.get_config('biofilm:temperature_coeff_respiration')**((self.environment.sea_water_temperature - 20)/10) * self.get_config('biofilm:respiration_rate')
 
         # Add up and convert to thickness
+        seconds_per_day = 60*60*24 # To convert from daily respiration/grazing to per second
         A = self.elements.biofilm_no_attached_algae
-        newAttached = A + (collision_term + growth*A - grazing*A - respiration*A)* self.time_step.total_seconds()
+        newAttached = A + (collision_term + growth*A - (grazing/seconds_per_day)*A - (respiration/seconds_per_day)*A)* self.time_step.total_seconds()
 
         self.elements.biofilm_no_attached_algae = newAttached
 
