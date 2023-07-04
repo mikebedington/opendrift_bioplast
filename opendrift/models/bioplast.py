@@ -186,7 +186,7 @@ class BioPlastDrift(OceanDrift):
 
         d_brown = 4*np.pi*(self.get_diffusivity(self.elements.total_diameter/2) + self.get_diffusivity(r_a))*((self.elements.total_diameter/2) + r_a)
 
-        d_settle = 0.5*np.pi*((self.elements.total_diameter/2)**2)*self.elements.terminal_velocity
+        d_settle = 0.5*np.pi*((self.elements.total_diameter/2)**2)*-self.elements.terminal_velocity
 
         d_shear = 1.3 * self.get_config('biofilm:shear') * ((self.elements.total_diameter/2) + r_a)**3
 
