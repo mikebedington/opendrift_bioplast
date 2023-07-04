@@ -132,8 +132,8 @@ class BioPlastDrift(OceanDrift):
     def get_seawater_viscosity(self):
         return 0.001*(1.7915 - 0.0538*self.environment.sea_water_temperature+ 0.007*(self.environment.sea_water_temperature**(2.0)) - 0.0023*self.environment.sea_water_salinity)
 
-    def update_terminal_velocity(self):
-        """Calculate terminal velocity for the plastic particle
+    def update_terminal_velocity(self, Tprofiles=None, Sprofiles=None, z_index=None):
+        """Calculate terminal velocity for the plastic particles - taken from Pelagic Egg and adapted
 
         according to
         S. Sundby (1983): A one-dimensional model for the vertical
