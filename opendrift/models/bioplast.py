@@ -116,7 +116,7 @@ class BioPlastDrift(OceanDrift):
                                 'min': None, 'max': None, 'units': 'seconds',
                                 'description': 'Va',
                                 'level': self.CONFIG_LEVEL_ADVANCED},
-            'biofilm:algal_cell_radius':{'type':'float', 'default':4.77*10**-17,
+            'biofilm:algal_cell_radius':{'type':'float', 'default':7.78*10**-6,
                                 'min': None, 'max': None, 'units': 'seconds',
                                 'description': 'Ra',
                                 'level': self.CONFIG_LEVEL_ADVANCED},
@@ -124,17 +124,15 @@ class BioPlastDrift(OceanDrift):
                                 'min': None, 'max': None, 'units': 'seconds',
                                 'description': 'Used to convert phytoplankton C to no of cells',
                                 'level': self.CONFIG_LEVEL_ADVANCED},
-            'biofilm:shear':{'type':'float', 'default':1.7*10*-5,
+            'biofilm:shear':{'type':'float', 'default':1.7*10**-5,
                                 'min': None, 'max': None, 'units': 'seconds',
                                 'description': 'Shear rate',
                                 'level': self.CONFIG_LEVEL_ADVANCED}})
-        self.set_config('biofilm:algal_cell_radius', 4.77*10**-17)
 
     def get_seawater_viscosity(self):
         return 0.001*(1.7915 - 0.0538*self.environment.sea_water_temperature+ 0.007*(self.environment.sea_water_temperature**(2.0)) - 0.0023*self.environment.sea_water_salinity)
 
-    def update_terminal_velocity(self, Tprofiles=None,
-                                 Sprofiles=None, z_index=None):
+    def update_terminal_velocity(self):
         """Calculate terminal velocity for the plastic particle
 
         according to
