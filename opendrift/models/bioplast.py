@@ -149,7 +149,7 @@ class BioPlastDrift(OceanDrift):
         # Get the properies which determine buoyancy
         partsize = self.elements.total_diameter  
 
-        DENSw = self.sea_water_density(T=self.environment.sea_water_temperature, S=self.environment.sea_water_temperature)
+        DENSw = self.sea_water_density(T=self.environment.sea_water_temperature, S=self.environment.sea_water_salinity)
         DENSpart = self.elements.total_density
         dr = DENSw-DENSpart  # density difference
 
