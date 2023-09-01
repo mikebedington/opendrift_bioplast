@@ -18,6 +18,7 @@ import numpy as np
 import logging; logger = logging.getLogger(__name__)
 
 from opendrift.models.oceandrift import OceanDrift, Lagrangian3DArray
+from opendrift.models.physics_methods import hour_angle, solar_elevation
 
 # Defining the properties for plastic capable of biofouling
 class BioPlast(Lagrangian3DArray):
@@ -75,7 +76,9 @@ class BioPlastDrift(OceanDrift):
         'turbulent_kinetic_energy': {'fallback': 0},
         'turbulent_generic_length_scale': {'fallback': 0},
         'upward_sea_water_velocity': {'fallback': 0},
-        'mass_concentration_of_phytoplankton_expressed_as_carbon_in_sea_water':{'fallback':0}
+        'mass_concentration_of_phytoplankton_expressed_as_carbon_in_sea_water':{'fallback':0},
+        'mass_concentration_of_phytoplankton_expressed_as_chl_in_sea_water':{'fallback':0},
+        'surface_net_downward_radiative_flux':{'fallback':0}
       }
 
     # Default colors for plotting
@@ -127,6 +130,46 @@ class BioPlastDrift(OceanDrift):
             'biofilm:shear':{'type':'float', 'default':1.7*10**-5,
                                 'min': None, 'max': None, 'units': 'seconds',
                                 'description': 'Shear rate',
+                                'level': self.CONFIG_LEVEL_ADVANCED},
+            'biofilm:growth_temperature_max':{'type':'float', 'default':33.3,
+                                'min': 32.3, 'max': 34.2, 'units': 'degrees C',
+                                'description': 'Max temperature for algal growth',
+                                'level': self.CONFIG_LEVEL_ADVANCED},
+            'biofilm:growth_temperature_min':{'type':'float', 'default':0.2,
+                                'min': -3.7, 'max': 3.2, 'units': 'degrees C',
+                                'description': 'Min temperature for algal growth',
+                                'level': self.CONFIG_LEVEL_ADVANCED},
+            'biofilm:growth_temperature_optimal':{'type':'float', 'default':26.7,
+                                'min': 26.0, 'max': 27.5, 'units': 'degrees C',
+                                'description': 'Optimal temperature for algal growth',
+                                'level': self.CONFIG_LEVEL_ADVANCED},
+            'biofilm:maximum_growth_rate':{'type':'float', 'default':1.85,
+                                'min': 1.38, 'max': 2.17, 'units': 'days -1',
+                                'description': 'Maximum algal growth rate',
+                                'level': self.CONFIG_LEVEL_ADVANCED},
+            'biofilm:initial_slope':{'type':'float', 'default':0.12,
+                                'min': 0.05, 'max': 0.21, 'units': 'days -1',
+                                'description': 'Initial slope',
+                                'level': self.CONFIG_LEVEL_ADVANCED},
+            'biofilm:growth_light_optimal':{'type':'float', 'default':1.75392*19**13,
+                                'min': None, 'max': None, 'units': 'micro Em-2d-1',
+                                'description': 'Optimal light intensity algae growth',
+                                'level': self.CONFIG_LEVEL_ADVANCED},
+            'light:twilight':{'type':'float', 'default':15,
+                                'min': 0., 'max': 90., 'units': 'degrees',
+                                'description': 'angle below the horizon for twilight',
+                                'level': self.CONFIG_LEVEL_ADVANCED},
+            'light:nu':{'type':'float', 'default':430.,
+                                'min': 100, 'max': 1000, 'units': 'nm',
+                                'description': 'Wavelength used to calculate irradiance',
+                                'level': self.CONFIG_LEVEL_ADVANCED},
+            'light:k_water':{'type':'float', 'default':0.2,
+                                'min': 0., 'max': 1, 'units': '',
+                                'description': 'coefficient of exponential decay of light in water',
+                                'level': self.CONFIG_LEVEL_ADVANCED},
+            'light:k_chl':{'type':'float', 'default':0.02,
+                                'min': 0, 'max': 1, 'units': '',
+                                'description': 'coefficient of exponential decay of light in water due to algae',
                                 'level': self.CONFIG_LEVEL_ADVANCED}})
 
     def get_seawater_viscosity(self):
@@ -197,7 +240,8 @@ class BioPlastDrift(OceanDrift):
         ### Growth on particle 
         # light and temp limited, needs light model and growth curve
         #growth = optimal_growth(light, temperature) - possible light model in sealice model
-        growth = 0
+
+        growth = self.get_light_growth() * self.get_temp_influence()
 
         ### Grazing on particle
         grazing = self.get_config('biofilm:grazing_rate')
@@ -213,6 +257,55 @@ class BioPlastDrift(OceanDrift):
 
         self.elements.biofilm_no_attached_algae = newAttached
 
+    def get_temp_influence(self):
+        # Equation 18 from Kooi et al 2017
+        T_z = self.environment.sea_water_temperature
+        T_max = self.get_config('biofilm:growth_temperature_max')
+        T_min = self.get_config('biofilm:growth_temperature_min')
+        T_opt = self.get_config('biofilm:growth_temperature_optimal')
+
+        numerator = (T_z - T_max)*(T_z - T_min)**2
+        denominator = ((T_opt - T_min)*((T_opt - T_min)*(T_z - T_opt) - (T_opt - T_max)*(T_opt + T_min - 2*T_z)))
+
+        return numerator/denominator
+
+    def get_light_growth(self):
+        u_max = self.get_config('biofilm:maximum_growth_rate')
+        alpha = self.get_config('biofilm:initial_slope')
+        I_opt = self.get_config('biofilm:growth_light_optimal')
+
+        # Instead of eqn 20 from Kooi et al, use light model from sealice setup
+        I_z = self.irradiance()
+    
+        # Eqn 17 from Kooi et al 2017
+        denominator = I_z + (u_max/alpha)*((I_z/I_opt) - 1)**2
+        u_opt = u_max * (I_z / denominator)
+        
+        return u_opt
+
+    def irradiance(self):
+        """
+        From SeaLice model
+
+        Distribute the daily energy from irradiance with a gaussian distribution.
+        We use the twilight times for high sensitivity organisms
+        Convert irradiance from W.m-2 to micromol photon.s-1.m-2
+        https://www.berthold.com/en/bioanalytic/knowledge/faq/irradiance-to-photon-flux
+        calculate the photon flux in the water according to exponential decay from the sea surface
+        """
+        tau= np.pi+2*np.deg2rad(self.get_config('light:twilight')) #width of solar irridation distribution
+        nu = self.get_config('light:nu') # Wavelength used to calculalate irradiance
+        k_water = self.get_config('light:k_water') # Extinction coefficient water 
+        k_chl = self.get_config('light:k_chl') # Extinction coefficient algae
+ 
+        k_tot = k_water + k_chl * self.environment.mass_concentration_of_phytoplankton_expressed_as_chl_in_sea_water
+        solar_angle = np.deg2rad(hour_angle(self.time,np.mean(self.elements.lon)))
+
+        solar_coeff= np.sqrt(tau/(2*np.pi)*np.exp(-tau/2*solar_angle**2))
+
+        light = solar_coeff*self.environment.surface_net_downward_radiative_flux* \
+                        nu*0.00836*np.exp(k_tot*self.elements.z)
+        return light
 
     def get_diffusivity(self, radius):
         boltzmann = 1.0306*10**-13 
