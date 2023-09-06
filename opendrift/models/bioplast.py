@@ -77,7 +77,7 @@ class BioPlastDrift(OceanDrift):
         'turbulent_generic_length_scale': {'fallback': 0},
         'upward_sea_water_velocity': {'fallback': 0},
         'mass_concentration_of_phytoplankton_expressed_as_carbon_in_sea_water':{'fallback':0},
-        'mass_concentration_of_phytoplankton_expressed_as_chl_in_sea_water':{'fallback':0},
+        'mass_concentration_of_chlorophyll_a_in_sea_water':{'fallback':0},
         'surface_net_downward_radiative_flux':{'fallback':0}
       }
 
@@ -298,7 +298,7 @@ class BioPlastDrift(OceanDrift):
         k_water = self.get_config('light:k_water') # Extinction coefficient water 
         k_chl = self.get_config('light:k_chl') # Extinction coefficient algae
  
-        k_tot = k_water + k_chl * self.environment.mass_concentration_of_phytoplankton_expressed_as_chl_in_sea_water
+        k_tot = k_water + k_chl * self.environment.mass_concentration_of_chlorophyll_a_in_sea_water
         solar_angle = np.deg2rad(hour_angle(self.time,np.mean(self.elements.lon)))
 
         solar_coeff= np.sqrt(tau/(2*np.pi)*np.exp(-tau/2*solar_angle**2))
