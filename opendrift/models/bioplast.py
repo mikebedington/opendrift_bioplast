@@ -239,8 +239,6 @@ class BioPlastDrift(OceanDrift):
 
         ### Growth on particle 
         # light and temp limited, needs light model and growth curve
-        #growth = optimal_growth(light, temperature) - possible light model in sealice model
-
         growth = self.get_light_growth() * self.get_temp_influence()
 
         ### Grazing on particle
