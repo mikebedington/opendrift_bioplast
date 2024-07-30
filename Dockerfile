@@ -16,7 +16,7 @@ COPY environment.yml .
 RUN micromamba install -n base -f environment.yml
 
 # Cache cartopy maps
-RUN /bin/bash -c "echo -e \"import cartopy\nfor s in ('c', 'l', 'i', 'h', 'f'): cartopy.io.shapereader.gshhs(s)\" | python"
+#RUN /bin/bash -c "echo -e \"import cartopy\nfor s in ('c', 'l', 'i', 'h', 'f'): cartopy.io.shapereader.gshhs(s)\" | python"
 
 # Install opendrift
 ADD . .
