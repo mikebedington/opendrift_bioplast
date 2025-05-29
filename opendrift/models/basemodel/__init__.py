@@ -1539,6 +1539,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
                                      number=n,
                                      time=time,
                                      **kwargs)
+            num_seeded += num_elements
 
     # @require_mode(mode=Mode.Ready)
     # def seed_from_shapefile_old(self,
@@ -1763,9 +1764,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
             #if self.num_elements_active() == 0:
             #    raise ValueError('No more active elements.')  # End simulation
 
-    @require_mode(mode=Mode.Run, post_next_mode=True)
-    def run(self,
-            time_step=None,
+    def run_prep(self, time_step=None,
             steps=None,
             time_step_output=None,
             duration=None,
@@ -1774,44 +1773,14 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
             export_variables=None,
             export_buffer_length=100,
             stop_on_error=False):
-        """Start a trajectory simulation, after initial configuration.
-
-        Performs the main loop:
-            - Obtain environment data for positions of all particles.
-            - Call method 'update' to update (incl advect) particle properties.
-        until one of the following conditions are met:
-            - Maximum number of steps are reached
-            - A needed variable can not be obtained by any reader
-                (outside spatial/temporal domain) and has no fallback
-                (default) value.
-            - All particles have been deactivated (e.g. by stranding)
-            - Occurance of any error, whose trace will be output to terminal.
-
-        Before starting a model run, readers must be added for all
-        required variables, unless fallback values have been specified.
-        Some particles/elements must have been scheduled for seeding, and the
-        run will start at the time when the first element has been scheduled..
-
-        Arguments:
-            time_step: interval between particles updates, in seconds or as
-                timedelta. Default: 3600 seconds (1 hour)
-            time_step_output: Time step at which element properties are stored
-                and eventually written to file.
-                Timedelta object or seconds.
-                Default: same as time_step, meaning that all steps are stored
-            The length of the simulation is specified by defining one
-                (and only one) of the following parameters:
-                - steps: integer, maximum number of steps. End of simulation
-                will be self.start_time + steps*self.time_step
-                - duration: timedelta defining the length of the simulation
-                - end_time: datetime object defining the end of the simulation
-            export_variables: list of variables and parameter names to be
-                saved to file. Default is None (all variables are saved)
+        """
+        Originally the first part of self.run but abstracted to allow external timestep iteration
         """
 
         # Exporting software and hardware specification, for possible debugging
         logger.debug(opendrift.versions())
 
+        self.stop_on_error = stop_on_error
         self.timer_end('configuration')
         self.timer_start('preparing main loop')
 
@@ -2072,124 +2041,195 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
         #############################
         self.prepare_run()
 
-        ##########################
-        # Main loop
-        ##########################
         self.add_metadata('simulation_time', datetime.now())
         self.timer_end('preparing main loop')
         self.timer_start('main loop')
         self.memory_usage = np.array([])
+
+    @require_mode(mode=Mode.Run, post_next_mode=True)
+    def run(self,
+            time_step=None,
+            steps=None,
+            time_step_output=None,
+            duration=None,
+            end_time=None,
+            outfile=None,
+            export_variables=None,
+            export_buffer_length=100,
+            stop_on_error=False):
+        """Start a trajectory simulation, after initial configuration.
+
+        Performs the main loop:
+            - Obtain environment data for positions of all particles.
+            - Call method 'update' to update (incl advect) particle properties.
+        until one of the following conditions are met:
+            - Maximum number of steps are reached
+            - A needed variable can not be obtained by any reader
+                (outside spatial/temporal domain) and has no fallback
+                (default) value.
+            - All particles have been deactivated (e.g. by stranding)
+            - Occurance of any error, whose trace will be output to terminal.
+
+        Before starting a model run, readers must be added for all
+        required variables, unless fallback values have been specified.
+        Some particles/elements must have been scheduled for seeding, and the
+        run will start at the time when the first element has been scheduled..
+
+        Arguments:
+            time_step: interval between particles updates, in seconds or as
+                timedelta. Default: 3600 seconds (1 hour)
+            time_step_output: Time step at which element properties are stored
+                and eventually written to file.
+                Timedelta object or seconds.
+                Default: same as time_step, meaning that all steps are stored
+            The length of the simulation is specified by defining one
+                (and only one) of the following parameters:
+                - steps: integer, maximum number of steps. End of simulation
+                will be self.start_time + steps*self.time_step
+                - duration: timedelta defining the length of the simulation
+                - end_time: datetime object defining the end of the simulation
+            export_variables: list of variables and parameter names to be
+                saved to file. Default is None (all variables are saved)
+        """
+
+        self.run_prep(time_step=time_step,
+                steps=steps,
+                time_step_output=time_step_output,
+                duration=duration,
+                end_time=end_time,
+                outfile=outfile,
+                export_variables=export_variables,
+                export_buffer_length=export_buffer_length,
+                stop_on_error=stop_on_error)
+        ##########################
+        # Main loop
+        ##########################
         for i in range(self.expected_steps_calculation):
-            self.memory_usage = np.append(self.memory_usage, psutil.virtual_memory().used / (1024.0**3))
-            try:
-                # Release elements
-                self.release_elements()
+            self.run_1step()
 
-                # Jump to next timestep if no active elements
-                if self.num_elements_active() == 0 and self.num_elements_scheduled() > 0:
-                    logger.info(
-                        'No active but %s scheduled elements, skipping timestep %s (%s)'
-                        % (self.num_elements_scheduled(),
-                           self.steps_calculation + 1 , self.time))
-                    self.state_to_buffer()  # Append status to history array
-                    self.steps_calculation += 1
-                    if self.time is not None:
-                        self.time = self.time + self.time_step
-                    continue
+        self.run_end(outfile=outfile, export_variables=export_variables,
+                export_buffer_length=export_buffer_length)
 
-                # Display time to terminal
-                logger.debug('===================================' * 2)
-                logger.info('%s - step %i of %i - %i active elements '
-                            '(%i deactivated)' %
-                            (self.time, self.steps_calculation + 1,
-                             self.expected_steps_calculation,
-                             self.num_elements_active(),
-                             self.num_elements_deactivated()))
-                logger.debug('%s elements scheduled.' %
-                             self.num_elements_scheduled())
-                logger.debug('===================================' * 2)
-                
-                # Display element locations to terminal
-                for n in ['lat', 'lon', 'z']:
-                    d = getattr(self.elements, n)
-                    dmin = d.min();
-                    dmax = d.max()
-                    n = n.replace('lat', 'latitude').replace('lon', 'longitude')
-                    if dmin == dmax:
-                        logger.debug(f'\t\t{n} = {dmin}')
-                    else:
-                        logger.debug(f'\t\t{dmin} <- {n} -> {dmax}')
-                logger.debug('---------------------------------')
 
-                ###############################################
-                # Get environment data for all active elements
-                ###############################################
-                self.environment, self.environment_profiles, missing = \
-                    self.env.get_environment(list(self.required_variables),
-                                         self.time,
-                                         self.elements.lon,
-                                         self.elements.lat,
-                                         self.elements.z,
-                                         self.required_profiles,
-                                         self.profiles_depth)
+    def run_1step(self):
+        self.memory_usage = np.append(self.memory_usage, psutil.virtual_memory().used / (1024.0**3))
+        try:
+            # Release elements
+            self.release_elements()
 
-                self.calculate_missing_environment_variables()
-
-                self.report_missing_variables(missing)
-
-                self.interact_with_coastline()
-
-                self.interact_with_seafloor()
-
+            # Jump to next timestep if no active elements
+            if self.num_elements_active() == 0 and self.num_elements_scheduled() > 0:
+                logger.info(
+                    'No active but %s scheduled elements, skipping timestep %s (%s)'
+                    % (self.num_elements_scheduled(),
+                      self.steps_calculation + 1 , self.time))
                 self.state_to_buffer()  # Append status to history array
-                
-                self.increase_age_and_retire()
-
-                self.remove_deactivated_elements()
-
-                # Store location, in case elements shall be moved back
-                self.store_present_positions()
-                
-                if self.num_elements_active() > 0:
-                    ########################################
-                    # Calling module specific update method
-                    ########################################
-                    logger.debug('Calling %s.update()' % type(self).__name__)
-                    self.timer_start('main loop:updating elements')
-                    self.update()
-                    self.timer_end('main loop:updating elements')
-                else:
-                    if self.num_elements_scheduled() == 0:
-                        raise ValueError('No more active or scheduled elements, quitting.')
-                    else:
-                        logger.info('No active elements, skipping update() method')
-
-                self.horizontal_diffusion()
-
-                # Updating time
-                self.time = self.time + self.time_step
                 self.steps_calculation += 1
+                if self.time is not None:
+                    self.time = self.time + self.time_step
+                continue
 
-            except Exception as e:
-                message = ('The simulation stopped before requested '
-                           'end time was reached.')
-                logger.warning(message)
-                self.store_message(message)
-                logger.info('========================')
-                logger.info('End of simulation:')
-                logger.info(e)
-                logger.info(traceback.format_exc())
-                logger.info(self.get_messages())
-                if not hasattr(self, 'environment'):
-                    sys.exit('Simulation aborted. ' + self.get_messages())
-                logger.info('========================')
-                if stop_on_error is True:
-                    sys.exit('Stopping on error. ' + self.get_messages())
-                if self.steps_calculation <= 1:
-                    raise ValueError('Simulation stopped within '
-                                     'first timestep. ' + self.get_messages())
-                break
+            # Display time to terminal
+            logger.debug('===================================' * 2)
+            logger.info('%s - step %i of %i - %i active elements '
+                        '(%i deactivated)' %
+                       (self.time, self.steps_calculation + 1,
+                         self.expected_steps_calculation,
+                         self.num_elements_active(),
+                         self.num_elements_deactivated()))
+            logger.debug('%s elements scheduled.' %
+                         self.num_elements_scheduled())
+            logger.debug('===================================' * 2)
+             
+            # Display element locations to terminal
+            for n in ['lat', 'lon', 'z']:
+                d = getattr(self.elements, n)
+                dmin = d.min();
+                dmax = d.max()
+                n = n.replace('lat', 'latitude').replace('lon', 'longitude')
+                if dmin == dmax:
+                    logger.debug(f'\t\t{n} = {dmin}')
+                else:
+                    logger.debug(f'\t\t{dmin} <- {n} -> {dmax}')
+            logger.debug('---------------------------------')
 
+            ###############################################
+            # Get environment data for all active elements
+            ###############################################
+            self.environment, self.environment_profiles, missing = \
+                self.env.get_environment(list(self.required_variables),
+                                     self.time,
+                                     self.elements.lon,
+                                     self.elements.lat,
+                                     self.elements.z,
+                                     self.required_profiles,
+                                     self.profiles_depth)
+
+            self.calculate_missing_environment_variables()
+
+            self.report_missing_variables(missing)
+
+            self.interact_with_coastline()
+
+            self.interact_with_seafloor()
+
+            self.state_to_buffer()  # Append status to history array
+                
+            self.increase_age_and_retire()
+
+            self.remove_deactivated_elements()
+
+            # Store location, in case elements shall be moved back
+            self.store_present_positions()
+                
+            if self.num_elements_active() > 0:
+                ########################################
+                # Calling module specific update method
+                ########################################
+                logger.debug('Calling %s.update()' % type(self).__name__)
+                self.timer_start('main loop:updating elements')
+                self.update()
+                self.timer_end('main loop:updating elements')
+            else:
+                if self.num_elements_scheduled() == 0:
+                    raise ValueError('No more active or scheduled elements, quitting.')
+                else:
+                    logger.info('No active elements, skipping update() method')
+
+            self.horizontal_diffusion()
+
+            # Updating time
+            self.time = self.time + self.time_step
+            self.steps_calculation += 1
+
+        except Exception as e:
+            message = ('The simulation stopped before requested '
+                       'end time was reached.')
+            logger.warning(message)
+            self.store_message(message)
+            logger.info('========================')
+            logger.info('End of simulation:')
+            logger.info(e)
+            logger.info(traceback.format_exc())
+            logger.info(self.get_messages())
+            if not hasattr(self, 'environment'):
+                sys.exit('Simulation aborted. ' + self.get_messages())
+            logger.info('========================')
+            if self.stop_on_error is True:
+                sys.exit('Stopping on error. ' + self.get_messages())
+            if self.steps_calculation <= 1:                    raise ValueError('Simulation stopped within '
+                                 'first timestep. ' + self.get_messages())
+
+
+
+
+    def run_end(self,outfile=None,
+            export_variables=None,
+            export_buffer_length=100):
+        """
+        Abstracted from original self.run for the part after main loop
+
+        """
         self.timer_end('main loop')
         self.timer_start('cleaning up')
         logger.debug('Cleaning up')
@@ -2223,8 +2263,6 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
             if hasattr(self, 'environment_profiles'):
                 del self.environment_profiles
             self.result = xr.open_dataset(outfile)
-
-        return self.result
 
     def increase_age_and_retire(self):
         """Increase age of elements, and retire if older than config setting."""
@@ -2439,7 +2477,13 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
             lonmax = corners[1]
             latmin = corners[2]
             latmax = corners[3]
+        elif hasattr(self, 'lonmin'):  # if dataset is lazily imported
+            lonmin = self.lonmin - buffer * 2
+            lonmax = self.lonmax + buffer * 2
+            latmin = self.latmin - buffer
+            latmax = self.latmax + buffer
         else:
+            lons, lats = self.get_lonlats()
             if 'compare_lonmin' in kwargs:  # checking min/max lon/lat of other simulations
                 lonmin = np.minimum(kwargs['compare_lonmin'], np.nanmin(lons))
                 lonmax = np.maximum(kwargs['compare_lonmax'], np.nanmax(lons))
@@ -2478,6 +2522,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
 
             if lscale is None:
                 lscale = 'auto'
+
+        globe = crs.globe
 
         meanlat = (latmin + latmax) / 2
         aspect_ratio = float(latmax - latmin) / (float(lonmax - lonmin))
@@ -2593,6 +2639,20 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
         # TODO: avoid transposing lon, lat, and avoid returning lon, lat in the first place
         return fig, ax, self.crs_plot, lons.T, lats.T, index_of_first, index_of_last
 
+    def get_lonlats(self):
+        if self.history is not None:
+            lons = self.history['lon']
+            lats = self.history['lat']
+        else:
+            if self.steps_output > 0:
+                lons = np.ma.array(np.reshape(self.elements.lon, (1, -1))).T
+                lats = np.ma.array(np.reshape(self.elements.lat, (1, -1))).T
+            else:
+                lons = np.ma.array(
+                    np.reshape(self.elements_scheduled.lon, (1, -1))).T
+                lats = np.ma.array(
+                    np.reshape(self.elements_scheduled.lat, (1, -1))).T
+        return lons, lats
 
     def animation(self,
                   buffer=.2,
@@ -2698,6 +2758,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
         fig, ax, crs, x, y, index_of_first, index_of_last = \
             self.set_up_map(buffer=buffer, corners=corners, lscale=lscale,
                             fast=fast, hide_landmask=hide_landmask, xlocs = xlocs, ylocs = ylocs, **kwargs)
+
+        gcrs = ccrs.PlateCarree(globe=crs.globe)
 
         def plot_timestep(i):
             """Sub function needed for matplotlib animation."""
