@@ -44,16 +44,11 @@ class BioPlast(Lagrangian3DArray):
 
 
 class BioPlastDrift(OceanDrift):
-    """Buoyant particle trajectory model based on the OpenDrift framework.
+    """Biofouled plastic particle trajectory model based on the OpenDrift framework.
 
-        Developed at MET Norway
+        Implements equations from Kooi et al. 2011
+        Developed at NIVA/Akvaplan niva
 
-        Generic module for particles that are subject to vertical turbulent
-        mixing with the possibility for positive or negative buoyancy
-
-        Particles could be e.g. oil droplets, plankton, or sediments
-
-        Under construction.
     """
 
     ElementType = BioPlast
